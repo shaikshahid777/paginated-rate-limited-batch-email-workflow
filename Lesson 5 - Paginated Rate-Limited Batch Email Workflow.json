@@ -1,0 +1,448 @@
+{
+  "name": "Lesson 5 - Paginated Rate-Limited Batch Email Workflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "20ded333-046f-4641-815c-7319e74dc872",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "pageSize",
+              "type": "number",
+              "value": 10
+            },
+            {
+              "id": "a2",
+              "name": "batchSize",
+              "type": "number",
+              "value": 5
+            },
+            {
+              "id": "a3",
+              "name": "waitSeconds",
+              "type": "number",
+              "value": 2
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "82ba2ab4-2d6e-4b1b-a860-b0360e1ad2ad",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        224,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Reset shared state for a clean run\nconst s = $getWorkflowStaticData('global');\ns.records = [];\ns.currentPage = 1;\ns.totalRecords = 0;\ns.totalSucceeded = 0;\ns.totalFailed = 0;\nreturn $input.all();"
+      },
+      "id": "e5b89dfa-8f19-44f2-bfc4-8c27832c2631",
+      "name": "Init State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Emit the next page number and page size for the HTTP request\nconst s = $getWorkflowStaticData('global');\nconst pageSize = $('Config').first().json.pageSize;\nreturn [{ json: { currentPage: s.currentPage, pageSize: pageSize } }];"
+      },
+      "id": "26ef6861-d5a2-4387-aba5-8d985ea89e9c",
+      "name": "Prepare Page Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://jsonplaceholder.typicode.com/users",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "_page",
+              "value": "={{ $json.currentPage }}"
+            },
+            {
+              "name": "_limit",
+              "value": "={{ $json.pageSize }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f26c94ef-c98a-4476-82e6-a43d5eb45a11",
+      "name": "Fetch Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        128
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Store this page's records and decide whether more pages exist\nconst s = $getWorkflowStaticData('global');\nconst items = $input.all();\nconst valid = items.filter(i => i.json && i.json.id !== undefined && i.json.id !== null);\nfor (const it of valid) {\n  s.records.push({ id: it.json.id, name: it.json.name, email: it.json.email });\n}\ns.currentPage = s.currentPage + 1;\nconst hasMore = valid.length > 0;\nreturn [{ json: { hasMore: hasMore, fetched: valid.length, totalSoFar: s.records.length } }];"
+      },
+      "id": "63148a7a-af2b-4bfa-9ce5-4e1b2c50be3a",
+      "name": "Accumulate & Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.hasMore }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "56481b56-6e56-4962-9e15-2c2ecb76765f",
+      "name": "More Pages?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1344,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Emit the full aggregated dataset, one item per record\nconst s = $getWorkflowStaticData('global');\nconst records = s.records || [];\ns.totalRecords = records.length;\ns.totalSucceeded = 0;\ns.totalFailed = 0;\nreturn records.map(r => ({ json: r }));"
+      },
+      "id": "7e730506-439a-47ac-84d4-d204f6938a5b",
+      "name": "Combine All Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Produce the execution summary metrics\nconst s = $getWorkflowStaticData('global');\nreturn [{ json: {\n  totalRecords: s.totalRecords || 0,\n  totalSucceeded: s.totalSucceeded || 0,\n  totalFailed: s.totalFailed || 0,\n  generatedAt: new Date().toISOString()\n} }];"
+      },
+      "id": "5b98f19b-b19f-4771-abe8-5bb681ed73df",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://jsonplaceholder.typicode.com/{{ $json.id % 4 === 0 ? \"invalid_endpoint_simulated\" : \"posts\" }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "email",
+              "value": "={{ $json.email }}"
+            },
+            {
+              "name": "name",
+              "value": "={{ $json.name }}"
+            },
+            {
+              "name": "userId",
+              "value": "={{ $json.id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "27415ea7-59f2-489a-a4c5-df0967e38854",
+      "name": "Send Email (Simulated)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2016,
+        192
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Classify each processed record as Sent or Failed and track counts\nconst s = $getWorkflowStaticData('global');\nconst j = $input.item.json;\nconst failed = j.error !== undefined && j.error !== null;\nif (failed) {\n  s.totalFailed = (s.totalFailed || 0) + 1;\n} else {\n  s.totalSucceeded = (s.totalSucceeded || 0) + 1;\n}\nconst errMsg = failed ? (j.error.message ? j.error.message : String(j.error)) : null;\nreturn { json: { id: (j.userId !== undefined ? j.userId : j.id), email: j.email, name: j.name, status: failed ? 'Failed' : 'Sent', error: errMsg } };"
+      },
+      "id": "aa911fa4-2e6f-461e-bebc-f1dd78e6564e",
+      "name": "Check Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "amount": "={{ $('Config').first().json.waitSeconds }}"
+      },
+      "id": "dfce5355-62db-435e-b669-07b1de1ac75a",
+      "name": "Rate Limit Pause",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2464,
+        272
+      ],
+      "webhookId": "1743397d-d35a-4d17-ab1a-aec6842452ef"
+    },
+    {
+      "parameters": {
+        "batchSize": "={{ $('Config').first().json.batchSize }}",
+        "options": {}
+      },
+      "id": "0a4abb36-adad-4851-9feb-52f5103705d7",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1792,
+        192
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Init State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init State": {
+      "main": [
+        [
+          {
+            "node": "Prepare Page Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Page Request": {
+      "main": [
+        [
+          {
+            "node": "Fetch Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Page": {
+      "main": [
+        [
+          {
+            "node": "Accumulate & Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accumulate & Check": {
+      "main": [
+        [
+          {
+            "node": "More Pages?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "More Pages?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Page Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Combine All Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine All Pages": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email (Simulated)": {
+      "main": [
+        [
+          {
+            "node": "Check Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Success": {
+      "main": [
+        [
+          {
+            "node": "Rate Limit Pause",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rate Limit Pause": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Email (Simulated)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "ca5eb1a5-db53-4600-b803-fd45ffc6bcc9",
+  "meta": {
+    "instanceId": "201381d913fa9e78389f7093cb99cedc70c766251a500f897db19feccfda3bd0"
+  },
+  "nodeGroups": [
+    {
+      "id": "b9bedd32-58fd-48b4-bf5e-50de856c3ea7",
+      "name": "Configuration",
+      "nodeIds": [
+        "82ba2ab4-2d6e-4b1b-a860-b0360e1ad2ad",
+        "e5b89dfa-8f19-44f2-bfc4-8c27832c2631"
+      ],
+      "description": "Reusable settings: pageSize, batchSize, waitSeconds; resets run state."
+    },
+    {
+      "id": "8ff7aa9c-5d93-41b5-90a5-e959b690ea91",
+      "name": "Paginated Retrieval",
+      "nodeIds": [
+        "26ef6861-d5a2-4387-aba5-8d985ea89e9c",
+        "f26c94ef-c98a-4476-82e6-a43d5eb45a11",
+        "63148a7a-af2b-4bfa-9ce5-4e1b2c50be3a",
+        "56481b56-6e56-4962-9e15-2c2ecb76765f"
+      ],
+      "description": "Loops through JSONPlaceholder pages until an empty page ends pagination."
+    },
+    {
+      "id": "f1b0da1d-a61a-44f6-a1c5-6d585492028f",
+      "name": "Batch Processing & Summary",
+      "nodeIds": [
+        "7e730506-439a-47ac-84d4-d204f6938a5b",
+        "0a4abb36-adad-4851-9feb-52f5103705d7",
+        "27415ea7-59f2-489a-a4c5-df0967e38854",
+        "aa911fa4-2e6f-461e-bebc-f1dd78e6564e",
+        "dfce5355-62db-435e-b669-07b1de1ac75a",
+        "5b98f19b-b19f-4771-abe8-5bb681ed73df"
+      ],
+      "description": "Splits records into batches, simulates email, throttles, and reports metrics."
+    }
+  ],
+  "id": "6sFg5PSDDk92ddid",
+  "tags": []
+}
